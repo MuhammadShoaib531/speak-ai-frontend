@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const api = axios.create({
-  baseURL: 'https://dashboard.speakai.ai',
+  baseURL: 'https://dashboard.speakai.ai/api/',
   headers: { 'Content-Type': 'application/json' },
 });
 
