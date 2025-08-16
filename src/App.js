@@ -6,7 +6,6 @@ import useAppStore from './store/appStore';
 import Layout from './components/Layout/Layout';
 import AuthLayout from './components/Layout/AuthLayout';
 
-
 import Login from './pages/Auth/Login';
 import Register from './pages/Auth/Register';
 import ForgotPassword from './pages/Auth/ForgotPassword';
