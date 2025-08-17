@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeftIcon, MicrophoneIcon, SparklesIcon, DocumentArrowUpIcon } from '@heroicons/react/24/outline';
 import { toast } from 'react-toastify';
@@ -71,15 +71,18 @@ const AgentRetrain = () => {
   const [submitting, setSubmitting] = useState(false);
 
   const [agentName, setAgentName] = useState('');
-  const [email, setEmail] = useState(''); 
+  const [email, setEmail] = useState('');
   const [selectedType, setSelectedType] = useState('customer_support');
-  const [language, setLanguage] = useState('English'); 
+  const [language, setLanguage] = useState('English');
   const [model, setModel] = useState('');
   const [speakingStyle, setSpeakingStyle] = useState('professional');
   const [prompt, setPrompt] = useState('');
 
   const [voiceFile, setVoiceFile] = useState(null);
   const [knowledgeFile, setKnowledgeFile] = useState(null);
+
+  const voiceInputRef = useRef(null);
+  const knowledgeInputRef = useRef(null);
 
   const typeCards = useMemo(
     () => ['customer_support', 'lead_generation', 'appointment_scheduling'],
@@ -135,7 +138,7 @@ const AgentRetrain = () => {
 
         setAgentName(a.name);
         setSelectedType(a.type || 'customer_support');
-        setLanguage(a.language || 'English'); 
+        setLanguage(a.language || 'English');
         setModel(a.model || '');
         setSpeakingStyle(a.speakingStyle || 'professional');
 
@@ -155,7 +158,6 @@ const AgentRetrain = () => {
             }
           }
         }
-
       } catch {
         toast.error('Failed to load agent');
         navigate('/training', { replace: true });
@@ -165,21 +167,29 @@ const AgentRetrain = () => {
     };
 
     load();
-    return () => { mounted = false; };
+    return () => {
+      mounted = false;
+    };
   }, [id, user, agentsScope, navigate]);
 
   const handleVoiceFileChange = (e) => {
     const file = (e.target.files || [])[0];
     if (!file) return;
+
     const isMp3ByExt = /\.mp3$/i.test(file.name);
     const isMp3ByMime = (file.type || '').toLowerCase() === 'audio/mpeg';
     if (!isMp3ByExt && !isMp3ByMime) {
       toast.error('Only MP3 files are allowed for voice.');
-      e.target.value = '';
+      if (voiceInputRef.current) voiceInputRef.current.value = '';
       setVoiceFile(null);
       return;
     }
-    setVoiceFile(file);
+
+    const cloned = new File([file.slice(0, file.size, file.type)], file.name, {
+      type: file.type || 'audio/mpeg',
+      lastModified: Date.now(),
+    });
+    setVoiceFile(cloned);
   };
 
   const handleKnowledgeFileChange = (e) => {
@@ -187,21 +197,35 @@ const AgentRetrain = () => {
     if (files.length > 1) toast.info('Only one document is allowed. Using the first one.');
     const file = files[0] || null;
     if (!file) return;
+
     const lower = (file.name || '').toLowerCase();
     const mime = (file.type || '').toLowerCase();
     const okExt = /\.(pdf|doc|docx)$/i.test(lower);
     const okMime = mime.includes('pdf') || mime.includes('msword') || mime.includes('officedocument');
+
     if (!okExt && !okMime) {
       toast.error('Only PDF or DOC/DOCX files are allowed.');
-      e.target.value = '';
+      if (knowledgeInputRef.current) knowledgeInputRef.current.value = '';
       setKnowledgeFile(null);
       return;
     }
-    setKnowledgeFile(file);
+
+    const cloned = new File([file.slice(0, file.size, file.type)], file.name, {
+      type: file.type || 'application/octet-stream',
+      lastModified: Date.now(),
+    });
+    setKnowledgeFile(cloned);
   };
 
-  const clearKnowledgeFile = () => setKnowledgeFile(null);
-  const clearVoiceFile = () => setVoiceFile(null);
+  const clearKnowledgeFile = () => {
+    setKnowledgeFile(null);
+    if (knowledgeInputRef.current) knowledgeInputRef.current.value = '';
+  };
+
+  const clearVoiceFile = () => {
+    setVoiceFile(null);
+    if (voiceInputRef.current) voiceInputRef.current.value = '';
+  };
 
   const handleRetrain = async () => {
     const trimmedPrompt = cutMandatoryTail(prompt);
@@ -290,29 +314,51 @@ const AgentRetrain = () => {
         <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
           <div>
             <label className="block text-sm font-medium text-gray-700">Agent Name</label>
-            <input type="text" value={agentName} disabled className="mt-1 w-full pl-5 pr-5 py-3 border-2 rounded-xl focus:outline-none focus:ring-4 transition bg-gray-100 border-purple-200 focus:border-purple-400 ring-purple-100 cursor-not-allowed" />
+            <input
+              type="text"
+              value={agentName}
+              disabled
+              className="mt-1 w-full pl-5 pr-5 py-3 border-2 rounded-xl focus:outline-none focus:ring-4 transition bg-gray-100 border-purple-200 focus:border-purple-400 ring-purple-100 cursor-not-allowed"
+            />
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700">Email</label>
-            <input type="email" value={email} disabled className="mt-1 w-full pl-5 pr-5 py-3 border-2 rounded-xl focus:outline-none focus:ring-4 transition bg-gray-100 border-purple-200 focus:border-purple-400 ring-purple-100 cursor-not-allowed" />
+            <input
+              type="email"
+              value={email}
+              disabled
+              className="mt-1 w-full pl-5 pr-5 py-3 border-2 rounded-xl focus:outline-none focus:ring-4 transition bg-gray-100 border-purple-200 focus:border-purple-400 ring-purple-100 cursor-not-allowed"
+            />
           </div>
 
           <div>
             <label className="block text-sm font-medium text-gray-700">Default Language</label>
-            <select className="mt-1 w-full pl-5 pr-5 py-3 border-2 rounded-xl focus:outline-none focus:ring-4 transition border-purple-200 focus:border-purple-400 ring-purple-100" value={language} onChange={(e) => setLanguage(e.target.value)}>
+            <select
+              className="mt-1 w-full pl-5 pr-5 py-3 border-2 rounded-xl focus:outline-none focus:ring-4 transition border-purple-200 focus:border-purple-400 ring-purple-100"
+              value={language}
+              onChange={(e) => setLanguage(e.target.value)}
+            >
               <option value="">Select a language</option>
               {(languageList?.languages || []).map((l) => (
-                <option key={l.name} value={l.name}>{l.name}</option>
+                <option key={l.name} value={l.name}>
+                  {l.name}
+                </option>
               ))}
             </select>
           </div>
 
           <div>
             <label className="block text-sm font-medium text-gray-700">AI Model</label>
-            <select className="mt-1 w-full pl-5 pr-5 py-3 border-2 rounded-xl focus:outline-none focus:ring-4 transition border-purple-200 focus:border-purple-400 ring-purple-100" value={model} onChange={(e) => setModel(e.target.value)}>
+            <select
+              className="mt-1 w-full pl-5 pr-5 py-3 border-2 rounded-xl focus:outline-none focus:ring-4 transition border-purple-200 focus:border-purple-400 ring-purple-100"
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+            >
               <option value="">Select a model</option>
               {(languageList?.models || []).map((m, idx) => (
-                <option key={idx} value={m}>{m}</option>
+                <option key={idx} value={m}>
+                  {m}
+                </option>
               ))}
             </select>
           </div>
@@ -331,7 +377,16 @@ const AgentRetrain = () => {
             <div className="flex text-sm text-gray-600">
               <label className="relative cursor-pointer bg-white rounded-md font-medium text-primary-600 hover:text-primary-500">
                 <span>Upload a voice file</span>
-                <input type="file" accept=".mp3" onChange={handleVoiceFileChange} className="sr-only" />
+                <input
+                  ref={voiceInputRef}
+                  type="file"
+                  accept=".mp3"
+                  onClick={() => {
+                    if (voiceInputRef.current) voiceInputRef.current.value = '';
+                  }}
+                  onChange={handleVoiceFileChange}
+                  className="sr-only"
+                />
               </label>
               <p className="pl-1">or drag and drop</p>
             </div>
@@ -353,7 +408,11 @@ const AgentRetrain = () => {
 
         <div className="mt-6">
           <label className="block text-sm font-medium text-gray-700">Speaking Style</label>
-          <select className="mt-1 w-full pl-5 pr-5 py-3 border-2 rounded-xl focus:outline-none focus:ring-4 transition border-purple-200 focus:border-purple-400 ring-purple-100" value={speakingStyle} onChange={(e) => setSpeakingStyle(e.target.value)}>
+          <select
+            className="mt-1 w-full pl-5 pr-5 py-3 border-2 rounded-xl focus:outline-none focus:ring-4 transition border-purple-200 focus:border-purple-400 ring-purple-100"
+            value={speakingStyle}
+            onChange={(e) => setSpeakingStyle(e.target.value)}
+          >
             <option value="professional">Professional</option>
             <option value="friendly">Friendly</option>
             <option value="casual">Casual</option>
@@ -372,8 +431,12 @@ const AgentRetrain = () => {
               <label className="relative cursor-pointer bg-white rounded-md font-medium text-primary-600 hover:text-primary-500">
                 <span>Upload document</span>
                 <input
-                  type="file" 
+                  ref={knowledgeInputRef}
+                  type="file"
                   accept=".pdf,.doc,.docx"
+                  onClick={() => {
+                    if (knowledgeInputRef.current) knowledgeInputRef.current.value = '';
+                  }}
                   onChange={handleKnowledgeFileChange}
                   className="sr-only"
                 />

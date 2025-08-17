@@ -37,9 +37,9 @@ const Analytics = () => {
   const {
     analytics,
     fetchAnalytics,
-    agents,        
-    fetchAgents,   
-    loading,        
+    agents,     
+    fetchAgents,
+    loading,
   } = useAppStore();
 
   const [perfAgents, setPerfAgents] = useState([]);
@@ -70,12 +70,6 @@ const Analytics = () => {
   useEffect(() => {
     fetchIndividualPerformance();
   }, [fetchIndividualPerformance]);
-
-  const doRefresh = useCallback(() => {
-    fetchAgents?.();
-    fetchAnalytics?.({ range: DEFAULT_RANGE });
-    fetchIndividualPerformance();
-  }, [fetchAgents, fetchAnalytics, fetchIndividualPerformance]);
 
   const formatDuration = (seconds) => {
     const sec = Number(seconds) || 0;
@@ -173,13 +167,13 @@ const Analytics = () => {
   const kpi = baseOverview;
 
   const activeAgentsCount = useMemo(() => {
-    if (typeof baseOverview.active_agent_count === 'number') {
-      return baseOverview.active_agent_count;
+    const list = Array.isArray(agents) ? agents : [];
+    const hasIsActive = list.some((a) => Object.prototype.hasOwnProperty.call(a || {}, 'is_active'));
+    if (hasIsActive) {
+      return list.reduce((acc, a) => acc + (a?.is_active === true ? 1 : 0), 0);
     }
-    return (agents || []).filter((a) =>
-      (a?.is_active === undefined || a?.is_active === null) ? true : !!a.is_active
-    ).length;
-  }, [agents, baseOverview.active_agent_count]);
+    return (perfAgents || []).length;
+  }, [agents, perfAgents]);
 
   const colorClass = {
     primary: 'text-primary-600',
@@ -284,6 +278,12 @@ const Analytics = () => {
     analytics?.data_period?.start_date,
     analytics?.data_period?.end_date,
   ]);
+
+  const doRefresh = useCallback(() => {
+    fetchAgents?.();
+    fetchAnalytics?.({ range: DEFAULT_RANGE });
+    fetchIndividualPerformance();
+  }, [fetchAgents, fetchAnalytics, fetchIndividualPerformance]);
 
   return (
     <div className="space-y-6">
@@ -442,7 +442,7 @@ const Analytics = () => {
             <h3 className="text-lg font-medium text-gray-900">Agent Performance</h3>
             <p className="text-sm text-gray-500">Individual agent statistics</p>
           </div>
-          {isBusy ? (
+          {loading || perfLoading ? (
             <ListSkeleton rows={3} />
           ) : (
             <div className="max-h-96 overflow-y-auto space-y-4">

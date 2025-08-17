@@ -1,25 +1,61 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useForm } from 'react-hook-form';
 import { toast } from 'react-toastify';
 import { Link, useNavigate } from 'react-router-dom';
-import {
-  DocumentArrowUpIcon,
-  SparklesIcon,
-  ArrowLeftIcon,
-} from '@heroicons/react/24/outline';
+import { DocumentArrowUpIcon, SparklesIcon, ArrowLeftIcon } from '@heroicons/react/24/outline';
 
 import useAppStore from '../../store/appStore';
 import useAuthStore from '../../store/authStore';
 import api from '../../api/axiosInstance';
 import { pad } from '../../lib/commonUtils';
 
-const todayDate = () => {
+const todayDateLocal = () => {
   const d = new Date();
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
-const nowHHMM = () => {
+const nowHHMMLocal = () => {
   const d = new Date();
   return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+
+const toISOWithOffset = (date) => {
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const yyyy = date.getFullYear();
+  const mm = pad2(date.getMonth() + 1);
+  const dd = pad2(date.getDate());
+  const hh = pad2(date.getHours());
+  const mi = pad2(date.getMinutes());
+  const ss = pad2(date.getSeconds());
+  const ms = String(date.getMilliseconds()).padStart(3, '0');
+
+  const offMin = -date.getTimezoneOffset(); 
+  const sign = offMin >= 0 ? '+' : '-';
+  const abs = Math.abs(offMin);
+  const offH = pad2(Math.floor(abs / 60));
+  const offM = pad2(abs % 60);
+  return `${yyyy}-${mm}-${dd}T${hh}:${mi}:${ss}.${ms}${sign}${offH}:${offM}`;
+};
+
+const SERVER_TZ = 'Asia/Karachi';
+
+const formatYmdHmInTZ = (date, timeZone) => {
+  const dtf = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  const parts = dtf.formatToParts(date);
+  const pick = (t) => parts.find((p) => p.type === t)?.value ?? '';
+  const yyyy = pick('year');
+  const mm = pick('month');
+  const dd = pick('day');
+  const hh = pick('hour');
+  const mi = pick('minute');
+  return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
 };
 
 const BatchCallForm = () => {
@@ -49,8 +85,8 @@ const BatchCallForm = () => {
     try {
       const res = await api.get('/auth/admin/user-agents', { params: { email: currentEmail } });
       const rows = Array.isArray(res?.data?.agents) ? res.data.agents : [];
-      const filtered = rows.filter(a =>
-        String(a?.user_email || '').trim().toLowerCase() === currentEmailLc
+      const filtered = rows.filter(
+        (a) => String(a?.user_email || '').trim().toLowerCase() === currentEmailLc
       );
       filtered.sort((a, b) => {
         const ta = new Date(a?.updated_at || a?.created_at || 0).getTime();
@@ -83,16 +119,21 @@ const BatchCallForm = () => {
     register,
     handleSubmit,
     setValue,
+    watch,
     formState: { errors, isValid },
   } = useForm({
     mode: 'onChange',
     defaultValues: {
       phone_column: '',
-      scheduled_time_time: nowHHMM(),
       agent_name: '',
       call_name: '',
+      when_mode: 'now', 
+      scheduled_date: todayDateLocal(),
+      scheduled_time: nowHHMMLocal(),
     },
   });
+
+  const whenMode = watch('when_mode');
 
   useEffect(() => {
     if (!uaLoading && normalizedAgents.length === 1) {
@@ -100,7 +141,9 @@ const BatchCallForm = () => {
     }
   }, [uaLoading, normalizedAgents, setValue]);
 
+  const fileInputRef = useRef(null);
   const [csvFile, setCsvFile] = useState(null);
+  const [isUploading, setIsUploading] = useState(false);
 
   const handleFileChange = (e) => {
     const file = e.target.files?.[0];
@@ -108,46 +151,73 @@ const BatchCallForm = () => {
 
     const nameOk = /\.csv$/i.test(file.name);
     const typeOk = (file.type || '').toLowerCase() === 'text/csv' || nameOk;
-
     if (!nameOk || !typeOk) {
       toast.error('Please upload a valid CSV (.csv) file');
       return;
     }
-    setCsvFile(file);
+    const cloned = new File([file.slice(0, file.size, file.type)], file.name, {
+      type: file.type || 'text/csv',
+      lastModified: Date.now(),
+    });
+    setCsvFile(cloned);
   };
-
-  const buildScheduledTime = (hhmm) => `${todayDate()} ${hhmm}`;
 
   const onSubmit = async (data) => {
     if (!csvFile) {
       toast.error('Please upload a CSV file');
       return;
     }
-    const timeVal = (data.scheduled_time_time || '').trim();
-    if (!/^\d{2}:\d{2}$/.test(timeVal)) {
-      toast.error('Please choose a valid time');
-      return;
+
+    let scheduled_time = '';
+    let scheduled_at = undefined;
+
+    if (data.when_mode === 'later') {
+      const dateVal = String(data.scheduled_date || '').trim();
+      const timeVal = String(data.scheduled_time || '').trim(); 
+
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dateVal)) {
+        toast.error('Please choose a valid date');
+        return;
+      }
+      if (!/^\d{2}:\d{2}$/.test(timeVal)) {
+        toast.error('Please choose a valid time');
+        return;
+      }
+
+      const [y, m, d] = dateVal.split('-').map(Number);
+      const [hh, mm] = timeVal.split(':').map(Number);
+      const instant = new Date(y, (m || 1) - 1, d || 1, hh || 0, mm || 0, 0, 0);
+
+      scheduled_time = formatYmdHmInTZ(instant, SERVER_TZ);
+      scheduled_at = toISOWithOffset(instant);
+    } else {
+      scheduled_time = ''; 
     }
 
-    const payload = {
-      agent_name: data.agent_name,             
-      call_name: data.call_name,
-      phone_column: data.phone_column,
-      scheduled_time: buildScheduledTime(timeVal),
-      csvOrExcelFile: csvFile,
-    };
+    try {
+      setIsUploading(true);
+      const res = await createBatchCallingJob({
+        agent_name: data.agent_name,
+        call_name: data.call_name,
+        phone_column: data.phone_column,
+        scheduled_time, 
+        scheduled_at,  
+        csvOrExcelFile: csvFile,
+      });
 
-    const res = await createBatchCallingJob(payload);
-    if (res?.success) {
-      toast.success('Batch calling job submitted successfully!');
-      navigate('/batchcallinglist');
-    } else {
-      toast.error(res?.error || 'Batch call submission failed');
+      if (res?.success) {
+        toast.success('Batch calling job submitted successfully!');
+        navigate('/batchcallinglist');
+      } else {
+        toast.error(res?.error || 'Batch call submission failed');
+      }
+    } finally {
+      setIsUploading(false);
     }
   };
 
   const loading = !!batchCalling?.creating;
-  const agentsLoading = uaLoading; 
+  const agentsLoading = uaLoading;
 
   return (
     <div className="space-y-6">
@@ -157,15 +227,14 @@ const BatchCallForm = () => {
         </Link>
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Create Batch Call</h1>
-          <p className="mt-2 text-sm text-gray-600">
-            Schedule and configure your batch calling job
-          </p>
+          <p className="mt-2 text-sm text-gray-600">Schedule and configure your batch calling job</p>
         </div>
       </div>
 
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-8">
         <div className="card">
           <h3 className="text-lg font-medium text-gray-900 mb-4">Batch Call Information</h3>
+
           <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
             <div>
               <label className="block text-sm font-medium text-gray-700">Agent Name</label>
@@ -173,12 +242,12 @@ const BatchCallForm = () => {
                 disabled={agentsLoading}
                 {...register('agent_name', { required: 'Agent name is required' })}
                 className={`mt-1 w-full pl-5 pr-5 py-3 border-2 rounded-xl focus:outline-none focus:ring-4 transition ${
-                  errors.agent_name ? 'border-rose-300 ring-rose-100' : 'border-purple-200 focus:border-purple-400 ring-purple-100'
+                  errors.agent_name
+                    ? 'border-rose-300 ring-rose-100'
+                    : 'border-purple-200 focus:border-purple-400 ring-purple-100'
                 }`}
               >
-                <option value="">
-                  {agentsLoading ? 'Loading agents...' : 'Select an agent'}
-                </option>
+                <option value="">{agentsLoading ? 'Loading agents...' : 'Select an agent'}</option>
                 {normalizedAgents.map((agent) => (
                   <option key={agent.id} value={agent.name}>
                     {agent.name}
@@ -196,7 +265,9 @@ const BatchCallForm = () => {
               <input
                 type="text"
                 className={`mt-1 w-full pl-5 pr-5 py-3 border-2 rounded-xl focus:outline-none focus:ring-4 transition ${
-                  errors.call_name ? 'border-rose-300 ring-rose-100' : 'border-purple-200 focus:border-purple-400 ring-purple-100'
+                  errors.call_name
+                    ? 'border-rose-300 ring-rose-100'
+                    : 'border-purple-200 focus:border-purple-400 ring-purple-100'
                 }`}
                 placeholder="e.g. Reminder Campaign"
                 {...register('call_name', { required: 'Call name is required' })}
@@ -207,11 +278,24 @@ const BatchCallForm = () => {
             </div>
 
             <div>
+              <label className="block text-sm font-medium text-gray-700">When to start?</label>
+              <select
+                {...register('when_mode')}
+                className="mt-1 w-full pl-5 pr-5 py-3 border-2 rounded-xl focus:outline-none focus:ring-4 transition border-purple-200 focus:border-purple-400 ring-purple-100"
+              >
+                <option value="now">Start immediately</option>
+                <option value="later">Schedule for later</option>
+              </select>
+            </div>
+
+            <div>
               <label className="block text-sm font-medium text-gray-700">Phone Column</label>
               <input
                 type="text"
                 className={`mt-1 w-full pl-5 pr-5 py-3 border-2 rounded-xl focus:outline-none focus:ring-4 transition ${
-                  errors.phone_column ? 'border-rose-300 ring-rose-100' : 'border-purple-200 focus:border-purple-400 ring-purple-100'
+                  errors.phone_column
+                    ? 'border-rose-300 ring-rose-100'
+                    : 'border-purple-200 focus:border-purple-400 ring-purple-100'
                 }`}
                 placeholder="e.g. phone"
                 {...register('phone_column')}
@@ -221,20 +305,53 @@ const BatchCallForm = () => {
               )}
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700">Time (Today)</label>
-              <input
-                type="time"
-                step="60"
-                className={`mt-1 w-full pl-5 pr-5 py-3 border-2 rounded-xl focus:outline-none focus:ring-4 transition ${
-                  errors.scheduled_time_time ? 'border-rose-300 ring-rose-100' : 'border-purple-200 focus:border-purple-400 ring-purple-100'
-                }`}
-                {...register('scheduled_time_time', { required: 'Time is required' })}
-              />
-              {errors.scheduled_time_time && (
-                <p className="mt-1 text-sm text-red-600">{errors.scheduled_time_time.message}</p>
-              )}
-            </div>
+            {whenMode === 'later' && (
+              <div className="sm:col-span-2">
+                <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Date</label>
+                    <input
+                      type="date"
+                      className={`mt-1 w-full pl-5 pr-5 py-3 border-2 rounded-xl focus:outline-none focus:ring-4 transition ${
+                        errors.scheduled_date
+                          ? 'border-rose-300 ring-rose-100'
+                          : 'border-purple-200 focus:border-purple-400 ring-purple-100'
+                      }`}
+                      {...register('scheduled_date', {
+                        validate: (v) =>
+                          whenMode === 'now' ||
+                          /^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ||
+                          'Date is required',
+                      })}
+                    />
+                    {errors.scheduled_date && (
+                      <p className="mt-1 text-sm text-red-600">{errors.scheduled_date.message}</p>
+                    )}
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Time</label>
+                    <input
+                      type="time"
+                      step="60"
+                      className={`mt-1 w-full pl-5 pr-5 py-3 border-2 rounded-xl focus:outline-none focus:ring-4 transition ${
+                        errors.scheduled_time
+                          ? 'border-rose-300 ring-rose-100'
+                          : 'border-purple-200 focus:border-purple-400 ring-purple-100'
+                      }`}
+                      {...register('scheduled_time', {
+                        validate: (v) =>
+                          whenMode === 'now' ||
+                          /^\d{2}:\d{2}$/.test(String(v || '')) ||
+                          'Time is required',
+                      })}
+                    />
+                    {errors.scheduled_time && (
+                      <p className="mt-1 text-sm text-red-600">{errors.scheduled_time.message}</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -248,8 +365,12 @@ const BatchCallForm = () => {
                 <label className="relative cursor-pointer bg-white rounded-md font-medium text-primary-600 hover:text-primary-500">
                   <span>Upload CSV</span>
                   <input
+                    ref={fileInputRef}
                     type="file"
                     accept=".csv"
+                    onClick={() => {
+                      if (!isUploading && fileInputRef.current) fileInputRef.current.value = '';
+                    }}
                     onChange={handleFileChange}
                     className="sr-only"
                   />
@@ -268,7 +389,11 @@ const BatchCallForm = () => {
                 <button
                   type="button"
                   className="text-sm text-red-600 hover:underline"
-                  onClick={() => setCsvFile(null)}
+                  onClick={() => {
+                    if (isUploading) return;
+                    setCsvFile(null);
+                    if (fileInputRef.current) fileInputRef.current.value = '';
+                  }}
                 >
                   Remove
                 </button>
@@ -283,10 +408,17 @@ const BatchCallForm = () => {
           </Link>
           <button
             type="submit"
-            disabled={!!batchCalling?.creating || !isValid || !csvFile || uaLoading || normalizedAgents.length === 0}
+            disabled={
+              isUploading ||
+              !!batchCalling?.creating ||
+              !isValid ||
+              !csvFile ||
+              uaLoading ||
+              normalizedAgents.length === 0
+            }
             className="inline-flex items-center px-5 py-3 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 rounded-xl disabled:opacity-50"
           >
-            {batchCalling?.creating ? (
+            {isUploading || batchCalling?.creating ? (
               <>
                 <div className="spinner mr-2"></div> Creating...
               </>

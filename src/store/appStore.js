@@ -177,6 +177,7 @@ const useAppStore = create(
         csvOrExcelFile,
         phone_column = 'phone',
         scheduled_time = '',
+        scheduled_at, 
       } = {}) => {
         if (!agent_name) return { success: false, error: 'agent_name is required' };
         if (!call_name) return { success: false, error: 'call_name is required' };
@@ -192,7 +193,14 @@ const useAppStore = create(
           appendToFormData(fd, 'call_name', call_name);
           appendToFormData(fd, 'csv_file', csvOrExcelFile);
           appendToFormData(fd, 'phone_column', phone_column);
-          if (String(scheduled_time || '').trim()) appendToFormData(fd, 'scheduled_time', String(scheduled_time).trim());
+
+          if (String(scheduled_time || '').trim()) {
+            appendToFormData(fd, 'scheduled_time', String(scheduled_time).trim());
+          }
+
+          if (scheduled_at) {
+            appendToFormData(fd, 'scheduled_at', String(scheduled_at));
+          }
 
           const res = await api.post('/auth/agent/batch-calling', fd, {
             headers: { 'Content-Type': 'multipart/form-data' },
@@ -203,7 +211,7 @@ const useAppStore = create(
             batchCalling: { ...s.batchCalling, creating: false, createError: '', lastCreateResponse: payload },
           }));
 
-          try { await get().fetchBatchCallingStatus(); } catch { }
+          try { await get().fetchBatchCallingStatus(); } catch {}
 
           return { success: true, data: payload };
         } catch (e) {

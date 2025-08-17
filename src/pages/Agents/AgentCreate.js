@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { toast } from 'react-toastify';
@@ -39,6 +39,9 @@ const AgentCreate = () => {
 
   const [voiceFile, setVoiceFile] = useState(null);
   const [knowledgeFile, setKnowledgeFile] = useState(null);
+
+  const voiceInputRef = useRef(null);
+  const knowledgeInputRef = useRef(null);
 
   const {
     register,
@@ -90,11 +93,16 @@ const AgentCreate = () => {
     const isMp3ByMime = (file.type || '').toLowerCase() === 'audio/mpeg';
     if (!isMp3ByExt && !isMp3ByMime) {
       toast.error('Only MP3 files are allowed for voice.');
-      e.target.value = '';
+      if (voiceInputRef.current) voiceInputRef.current.value = '';
       setVoiceFile(null);
       return;
     }
-    setVoiceFile(file);
+
+    const cloned = new File([file.slice(0, file.size, file.type)], file.name, {
+      type: file.type || 'audio/mpeg',
+      lastModified: Date.now(),
+    });
+    setVoiceFile(cloned);
   };
 
   const handleKnowledgeChange = (e) => {
@@ -112,16 +120,27 @@ const AgentCreate = () => {
 
     if (!okExt && !okMime) {
       toast.error('Only PDF or DOC/DOCX files are allowed.');
-      e.target.value = '';
+      if (knowledgeInputRef.current) knowledgeInputRef.current.value = '';
       setKnowledgeFile(null);
       return;
     }
 
-    setKnowledgeFile(file);
+    const cloned = new File([file.slice(0, file.size, file.type)], file.name, {
+      type: file.type || 'application/octet-stream',
+      lastModified: Date.now(),
+    });
+    setKnowledgeFile(cloned);
   };
 
-  const clearKnowledgeFile = () => setKnowledgeFile(null);
-  const clearVoiceFile = () => setVoiceFile(null);
+  const clearKnowledgeFile = () => {
+    setKnowledgeFile(null);
+    if (knowledgeInputRef.current) knowledgeInputRef.current.value = '';
+  };
+
+  const clearVoiceFile = () => {
+    setVoiceFile(null);
+    if (voiceInputRef.current) voiceInputRef.current.value = '';
+  };
 
   const onSubmit = async (data) => {
     if (!selectedType) {
@@ -130,11 +149,11 @@ const AgentCreate = () => {
     }
 
     const payload = {
-      name: data.name,                   
-      firstMessage: data.firstMessage,    
-      prompt: data.prompt,  
-      email: data.email,     
-      model: data.model,   
+      name: data.name,
+      firstMessage: data.firstMessage,
+      prompt: data.prompt,
+      email: data.email,
+      model: data.model,
       type: selectedType,
       speakingStyle: data.speakingStyle || undefined,
       businessName: data.companyName || undefined,
@@ -290,8 +309,12 @@ const AgentCreate = () => {
                 <label className="relative cursor-pointer bg-white rounded-md font-medium text-primary-600 hover:text-primary-500">
                   <span>Upload a voice file</span>
                   <input
+                    ref={voiceInputRef}
                     type="file"
                     accept=".mp3"
+                    onClick={() => {
+                      if (voiceInputRef.current) voiceInputRef.current.value = '';
+                    }}
                     onChange={handleVoiceChange}
                     className="sr-only"
                   />
@@ -335,8 +358,12 @@ const AgentCreate = () => {
                 <label className="relative cursor-pointer bg-white rounded-md font-medium text-primary-600 hover:text-primary-500">
                   <span>Upload document</span>
                   <input
+                    ref={knowledgeInputRef}
                     type="file"
                     accept=".pdf,.doc,.docx"
+                    onClick={() => {
+                      if (knowledgeInputRef.current) knowledgeInputRef.current.value = '';
+                    }}
                     onChange={handleKnowledgeChange}
                     className="sr-only"
                   />
