@@ -41,6 +41,16 @@ const fmtRel = (dtLike) => {
   } catch { return ''; }
 };
 
+const toMMSS = (secsLike) => {
+  const s = Number(secsLike);
+  if (!Number.isFinite(s) || s <= 0) return '0:00';
+  const sec = Math.floor(s % 60);
+  const min = Math.floor((s / 60) % 60);
+  const hrs = Math.floor(s / 3600);
+  if (hrs > 0) return `${hrs}:${String(min).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+  return `${min}:${String(sec).padStart(2,'0')}`;
+};
+
 const KPISkeleton = () => (
   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
     {[...Array(4)].map((_, i) => (
@@ -83,11 +93,15 @@ const Dashboard = () => {
     loading: storeLoading,
   } = useAppStore();
 
-  const [uaAllAgents, setUaAllAgents] = useState([]);   
-  const [uaAgents, setUaAgents] = useState([]);        
+  const [uaAllAgents, setUaAllAgents] = useState([]);
+  const [uaAgents, setUaAgents] = useState([]);
   const [uaLoading, setUaLoading] = useState(true);
   const [uaError, setUaError] = useState('');
   const [uaTotalAgentsFromAPI, setUaTotalAgentsFromAPI] = useState(0);
+
+  const [aiRows, setAiRows] = useState([]);
+  const [aiLoading, setAiLoading] = useState(true);
+  const [aiError, setAiError] = useState('');
 
   const currentEmail = (user?.email || user?.user_email || '').trim();
 
@@ -105,6 +119,7 @@ const Dashboard = () => {
 
       const mapped = list.map((a) => ({
         id: a.id ?? a.agent_id ?? String(a.agent_name ?? 'unknown'),
+        agent_id: a.agent_id ?? a.id ?? null,
         name: a.agent_name ?? a.name ?? 'Untitled Agent',
         type: (() => {
           const raw = String(a.agent_type || '').trim().toLowerCase();
@@ -119,6 +134,7 @@ const Dashboard = () => {
           successRate: Number.isFinite(a.success_rate_value)
             ? normalizeRate(a.success_rate_value)
             : normalizeRate(a.success_rate),
+          avgDurationSeconds: Number(a.average_call_duration_seconds ?? 0) || 0,
         },
         createdAt: a.created_at ?? null,
         updatedAt: a.updated_at ?? a.created_at ?? null,
@@ -145,8 +161,23 @@ const Dashboard = () => {
     }
   }, [currentEmail]);
 
+  const fetchAgentIndividualAnalytics = useCallback(async () => {
+    setAiLoading(true);
+    setAiError('');
+    try {
+      const res = await api.post('/analysis/training/agent-individual-analytics', {});
+      const rows = Array.isArray(res?.data?.individual_results) ? res.data.individual_results : [];
+      setAiRows(rows);
+    } catch (e) {
+      setAiError(e?.response?.data?.message || e?.message || 'Failed to load agent analytics');
+      setAiRows([]);
+    } finally {
+      setAiLoading(false);
+    }
+  }, []);
+
   const [refreshing, setRefreshing] = useState(false);
-  const isBusy = refreshing || uaLoading || storeLoading;
+  const isBusy = refreshing || uaLoading || storeLoading || aiLoading;
 
   const handleRefresh = useCallback(async () => {
     try {
@@ -155,15 +186,12 @@ const Dashboard = () => {
         (async () => { try { await fetchAnalytics?.(); } catch {} })(),
         (async () => { try { await fetchSubscriptions?.(); } catch {} })(),
         fetchUserAgents(),
+        fetchAgentIndividualAnalytics(),
       ]);
     } finally {
       setRefreshing(false);
     }
-  }, [fetchAnalytics, fetchSubscriptions, fetchUserAgents]);
-
-  const MIN_SKELETON_MS = 600;
-  const startedAtRef = useRef(Date.now());
-  const [minTimePassed, setMinTimePassed] = useState(false);
+  }, [fetchAnalytics, fetchSubscriptions, fetchUserAgents, fetchAgentIndividualAnalytics]);
 
   useEffect(() => {
     (async () => {
@@ -172,37 +200,65 @@ const Dashboard = () => {
           (async () => { try { await fetchAnalytics?.(); } catch {} })(),
           (async () => { try { await fetchSubscriptions?.(); } catch {} })(),
           fetchUserAgents(),
+          fetchAgentIndividualAnalytics(),
         ]);
       } catch {}
     })();
-  }, [fetchAnalytics, fetchSubscriptions, fetchUserAgents]);
+  }, [fetchAnalytics, fetchSubscriptions, fetchUserAgents, fetchAgentIndividualAnalytics]);
 
+  const MIN_SKELETON_MS = 600;
+  const startedAtRef = useRef(Date.now());
+  const [minTimePassed, setMinTimePassed] = useState(false);
   useEffect(() => {
     const left = Math.max(0, MIN_SKELETON_MS - (Date.now() - startedAtRef.current));
     const t = setTimeout(() => setMinTimePassed(true), left);
     return () => clearTimeout(t);
   }, []);
 
-  const showKPISkeleton = uaLoading || refreshing || !minTimePassed;
+  const showKPISkeleton = uaLoading || aiLoading || refreshing || !minTimePassed;
+  const showListSkeleton = (!minTimePassed) || refreshing || uaLoading || storeLoading || aiLoading;
 
-  const showListSkeleton = (!minTimePassed) || refreshing || uaLoading || storeLoading;
+  const aiMap = useMemo(() => {
+    const map = new Map();
+    const norm = (s) => String(s || '').trim().toLowerCase();
+    aiRows.forEach((r) => {
+      const idKey = r.agent_id ?? r.id ?? null;
+      const nameKey = norm(r.agent_name ?? r.name);
+      const value = {
+        calls: Number(r.total_calls ?? r.calls ?? r.call_count ?? 0) || 0,
+        successRate: normalizeRate(r.success_rate_value ?? r.success_rate ?? 0),
+        avgDurationSeconds: Number(
+          r.average_call_duration_seconds ??
+          r.avg_duration_seconds ??
+          r.average_duration_seconds ??
+          0
+        ) || 0,
+      };
+      if (idKey != null) map.set(String(idKey), value);
+      if (nameKey) map.set(`name:${nameKey}`, value);
+    });
+    return map;
+  }, [aiRows]);
+
+  const getStatsForAgent = useCallback((agent) => {
+    const byId = agent.agent_id != null ? aiMap.get(String(agent.agent_id)) || aiMap.get(String(agent.id)) : undefined;
+    const byName = aiMap.get(`name:${String(agent.name || '').trim().toLowerCase()}`);
+    const fromAI = byId || byName;
+    if (fromAI) return fromAI;
+    return agent.stats || { calls: 0, successRate: 0, avgDurationSeconds: 0 };
+  }, [aiMap]);
 
   const kpis = useMemo(() => {
     const total = uaTotalAgentsFromAPI || uaAllAgents.length || 0;
-
     const weekAgo = Date.now() - 7 * 24 * 3600 * 1000;
     const newThisWeek = uaAllAgents.reduce((acc, a) => {
       const t = a.createdAt ? new Date(a.createdAt).getTime() : 0;
       return acc + (t >= weekAgo ? 1 : 0);
     }, 0);
-
     const inactive = uaAllAgents.reduce((acc, a) => acc + (a.is_active ? 0 : 1), 0);
-
     const withPhones = uaAllAgents.reduce((acc, a) => acc + (!!a.twilio_number ? 1 : 0), 0);
-
     const withDocs = uaAllAgents.reduce((acc, a) => acc + (a.has_doc ? 1 : 0), 0);
     const docsCoverage = total ? Math.round((withDocs / total) * 100) : 0;
-
     return { total, newThisWeek, inactive, withPhones, docsCoverage };
   }, [uaAllAgents, uaTotalAgentsFromAPI]);
 
@@ -218,11 +274,12 @@ const Dashboard = () => {
       if (a.createdAt) {
         rows.push({ id: `created-${a.id}`, type: 'agent', agent: a.name, description: 'Agent created', timestamp: fmtRel(a.createdAt) });
       }
-      rows.push({ id: `calls-${a.id}`, type: 'call', agent: a.name, description: `${a.stats.calls} call${a.stats.calls === 1 ? '' : 's'} so far`, timestamp: fmtRel(a.createdAt) || '' });
-      if (idx === 0) rows.push({ id: `sr-${a.id}`, type: 'appointment', agent: a.name, description: `Success rate ${a.stats.successRate}%`, timestamp: fmtRel(a.createdAt) || '' });
+      const s = getStatsForAgent(a);
+      rows.push({ id: `calls-${a.id}`, type: 'call', agent: a.name, description: `${s.calls} call${s.calls === 1 ? '' : 's'} so far`, timestamp: fmtRel(a.createdAt) || '' });
+      if (idx === 0) rows.push({ id: `sr-${a.id}`, type: 'appointment', agent: a.name, description: `Success rate ${s.successRate}%`, timestamp: fmtRel(a.createdAt) || '' });
     });
     return rows.slice(0, 5);
-  }, [analytics?.recentActivity, analytics?.activity, uaAgents]);
+  }, [analytics?.recentActivity, analytics?.activity, uaAgents, getStatsForAgent]);
 
   const iconColor = {
     primary: 'text-primary-600',
@@ -236,7 +293,7 @@ const Dashboard = () => {
       <div className="flex items-center justify-between">
         <div className="flex items-center min-w-0 flex-1">
           <div className="flex-shrink-0 mr-4">
-            <Icon className={`h-8 w-8 ${iconColor[color] || iconColor.primary} ${uaLoading || refreshing ? 'animate-pulse' : ''}`} />
+            <Icon className={`h-8 w-8 ${iconColor[color] || iconColor.primary} ${uaLoading || aiLoading ? 'animate-pulse' : ''}`} />
           </div>
           <div className="min-w-0 flex-1">
             <dt className="text-sm font-medium text-gray-500 truncate">{title}</dt>
@@ -248,34 +305,37 @@ const Dashboard = () => {
     </div>
   );
 
-  const AgentCard = ({ agent }) => (
-    <div className="card">
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center min-w-0 flex-1">
-          <div className="flex-shrink-0 mr-3 text-2xl">
-            {agent.type === 'customer_support' && '🎧'}
-            {agent.type === 'lead_generation' && '🎯'}
-            {agent.type === 'appointment_scheduling' && '📅'}
+  const AgentCard = ({ agent }) => {
+    const s = getStatsForAgent(agent);
+    return (
+      <div className="card">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center min-w-0 flex-1">
+            <div className="flex-shrink-0 mr-3 text-2xl">
+              {agent.type === 'customer_support' && '🎧'}
+              {agent.type === 'lead_generation' && '🎯'}
+              {agent.type === 'appointment_scheduling' && '📅'}
+            </div>
+            <div className="min-w-0 flex-1">
+              <h3 className="text-lg font-medium text-gray-900 truncate">{agent.name}</h3>
+              <p className="text-sm text-gray-500">
+                {s.calls} calls • {s.successRate}% success rate
+              </p>
+            </div>
           </div>
-          <div className="min-w-0 flex-1">
-            <h3 className="text-lg font-medium text-gray-900 truncate">{agent.name}</h3>
-            <p className="text-sm text-gray-500">
-              {agent.stats.calls} calls • {agent.stats.successRate}% success rate
-            </p>
-          </div>
+          <span
+            className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+              agent.status === 'Active'
+                ? 'bg-success-100 text-success-800'
+                : 'bg-gray-100 text-gray-800'
+            }`}
+          >
+            {agent.status}
+          </span>
         </div>
-        <span
-          className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-            agent.status === 'Active'
-              ? 'bg-success-100 text-success-800'
-              : 'bg-gray-100 text-gray-800'
-          }`}
-        >
-          {agent.status}
-        </span>
       </div>
-    </div>
-  );
+    );
+  };
 
   const ActivityItem = ({ activity }) => (
     <div className="flex items-center space-x-4 p-3 hover:bg-gray-50 rounded-lg">
@@ -355,6 +415,9 @@ const Dashboard = () => {
                 ? <p className="text-gray-500 text-sm">No agents found.</p>
                 : uaAgents.map((agent) => <AgentCard key={agent.id} agent={agent} />)}
             </div>
+          )}
+          {aiError && !aiLoading && (
+            <p className="text-xs text-red-600 mt-3">Analytics: {aiError}</p>
           )}
         </div>
 
