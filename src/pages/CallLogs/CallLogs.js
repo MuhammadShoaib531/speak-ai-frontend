@@ -19,22 +19,22 @@ import {
   SearchAndFilters,
 } from '../../lib/commonUtils';
 
-const compactPad = 'px-4 py-3';
-
-
+const PAGE_SIZE = 10;
 
 const CallLogs = () => {
-  const { callHistory, fetchCallHistory } = useAppStore();
+  const { callHistory, fetchCallHistory, getAgentById } = useAppStore();
 
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [filterAgent, setFilterAgent] = useState('all');
+  const [page, setPage] = useState(1);
 
   const doRefresh = useCallback(async () => {
     setIsLoading(true);
     try {
       await fetchCallHistory?.(50);
+      setPage(1);
     } finally {
       setIsLoading(false);
     }
@@ -55,22 +55,31 @@ const CallLogs = () => {
 
   const rows = useMemo(() => {
     const list = Array.isArray(callHistory) ? callHistory : [];
-    return list.map((r, idx) => ({
-      id: r.id ?? r.call_id ?? r.sid ?? idx,
-      timestamp: (() => {
-        const v = r.timestamp ?? r.time ?? r.created_at ?? r.createdAt ?? r.start_time;
-        const d = typeof v === 'number' ? new Date(v * (v < 2000000000 ? 1000 : 1)) : new Date(v);
-        return Number.isNaN(d.getTime()) ? null : d;
-      })(),
-      customerName: r.customer_name ?? r.caller_name ?? r.customer ?? r.name ?? 'Unknown',
-      customerPhone: r.customer_phone ?? r.caller ?? r.phone ?? r.number ?? '',
-      agent: r.agent_name ?? r.agent ?? r.agent_id ?? '—',
-      durationLabel: parseDuration(r.duration_label ?? r.duration ?? r.duration_seconds),
-      durationSeconds: Number(r.duration_seconds ?? r.duration ?? 0),
-      status: r.status ?? r.call_status ?? 'completed',
-      type: r.type ?? r.direction ?? 'inbound',
-    }));
-  }, [callHistory]);
+    return list.map((r, idx) => {
+      const v = r.timestamp ?? r.call_date ?? r.time ?? r.created_at ?? r.createdAt ?? r.start_time;
+      const d = typeof v === 'number' ? new Date(v * (v < 2000000000 ? 1000 : 1)) : new Date(v);
+
+      const agentName =
+        r.agent_name ||
+        getAgentById?.(r.agent_id)?.agent_name ||
+        getAgentById?.(r.agent_id)?.name ||
+        r.agent ||
+        r.agent_id ||
+        '—';
+
+      return {
+        id: r.id ?? r.call_id ?? r.sid ?? idx,
+        timestamp: Number.isNaN(d.getTime()) ? null : d,
+        customerName: r.customer_name ?? r.caller_name ?? r.customer ?? r.name ?? 'Unknown',
+        customerPhone: r.customer_phone ?? r.phone_number ?? r.caller ?? r.phone ?? r.number ?? '',
+        agent: agentName,
+        durationLabel: parseDuration(r.duration_label ?? r.duration ?? r.duration_seconds),
+        durationSeconds: Number(r.duration_seconds ?? r.duration ?? 0),
+        status: r.status ?? r.call_status ?? 'completed',
+        type: r.type ?? r.call_type ?? r.direction ?? 'inbound',
+      };
+    });
+  }, [callHistory, getAgentById]);
 
   const agentOptions = useMemo(() => {
     const set = new Set();
@@ -93,7 +102,16 @@ const CallLogs = () => {
     });
   }, [rows, searchTerm, filterStatus, filterAgent]);
 
-  const totalCalls = filteredRows.length || rows.length;
+  useEffect(() => { setPage(1); }, [searchTerm, filterStatus, filterAgent]);
+
+  const total = filteredRows.length;
+  const totalCalls = total || rows.length;
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const clampedPage = Math.min(page, totalPages);
+  const startIdx = (clampedPage - 1) * PAGE_SIZE;
+  const endIdx = Math.min(startIdx + PAGE_SIZE, total);
+  const pageRows = filteredRows.slice(startIdx, endIdx);
 
   const avgDurationSecs = useMemo(() => {
     const secList = rows.map((r) => Number(r.durationSeconds)).filter((n) => Number.isFinite(n) && n > 0);
@@ -149,10 +167,7 @@ const CallLogs = () => {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Call Logs"
-        subtitle="View call recordings and transcripts"
-      >
+      <PageHeader title="Call Logs" subtitle="View call recordings and transcripts">
         <div className="flex items-center gap-2">
           <RefreshButton onClick={doRefresh} isLoading={isLoading} />
           <button onClick={exportCsv} className="btn btn-secondary">
@@ -232,7 +247,7 @@ const CallLogs = () => {
       />
 
       {isLoading ? (
-        <TableSkeleton rows={6} compactPad={compactPad} />
+        <TableSkeleton rows={6} compactPad="px-6 py-4" />
       ) : filteredRows.length === 0 ? (
         <div className="card">
           <div className="flex flex-col items-center justify-center py-14 text-center">
@@ -250,69 +265,85 @@ const CallLogs = () => {
           </div>
         </div>
       ) : (
-        <div className="card overflow-hidden">
-          <div className="overflow-x-auto">
-            <div className="min-w-full">
-              <div className="bg-gray-50">
-                <div className={`grid grid-cols-5 ${compactPad}`}>
-                  <div className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Call Info</div>
-                  <div className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Customer</div>
-                  <div className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Agent</div>
-                  <div className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Duration</div>
-                  <div className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</div>
-                </div>
+        <>
+          <div className="overflow-hidden rounded-lg border border-gray-200">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Call Info</th>
+                  <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Customer</th>
+                  <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Agent</th>
+                  <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Duration</th>
+                  <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
+                </tr>
+              </thead>
+
+              <tbody className="divide-y divide-gray-100 bg-white">
+                {pageRows.map((r) => (
+                  <tr key={r.id} className="hover:bg-gray-50">
+                    <td className="px-6 py-4 align-top">
+                      <div className="text-sm font-medium text-gray-900">
+                        {r.timestamp ? r.timestamp.toLocaleDateString() : '—'}
+                      </div>
+                      <div className="text-sm text-gray-500">
+                        {r.timestamp ? r.timestamp.toLocaleTimeString() : '—'}
+                      </div>
+                      <div className="text-sm text-gray-500">
+                        {norm(r.type) === 'inbound' ? '📞 Inbound' : '📱 Outbound'}
+                      </div>
+                    </td>
+
+                    <td className="px-6 py-4 align-top">
+                      <div className="text-sm font-medium text-gray-900">{r.customerName}</div>
+                      <div className="text-sm text-gray-500">{r.customerPhone}</div>
+                    </td>
+
+                    <td className="px-6 py-4 align-top">
+                      <div className="text-sm text-gray-900">{r.agent}</div>
+                    </td>
+
+                    <td className="px-6 py-4 align-top">
+                      <div className="text-sm text-gray-900">{r.durationLabel}</div>
+                    </td>
+
+                    <td className="px-6 py-4 align-top">
+                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusBadgeClass(r.status)}`}>
+                        {r.status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="card mt-4">
+            <div className="flex items-center justify-between">
+              <p className="text-sm text-gray-700">
+                Showing <span className="font-medium">{total ? startIdx + 1 : 0}</span> to{' '}
+                <span className="font-medium">{endIdx}</span> of{' '}
+                <span className="font-medium">{total}</span> results
+              </p>
+              <div className="flex items-center space-x-2">
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  disabled={clampedPage <= 1}
+                >
+                  Previous
+                </button>
+                <span className="px-3 py-1 text-sm text-gray-700">{clampedPage}</span>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={clampedPage >= totalPages}
+                >
+                  Next
+                </button>
               </div>
-
-              {filteredRows.map((r) => (
-                <div key={r.id} className={`grid grid-cols-5 ${compactPad} hover:bg-gray-50 border-b border-gray-100`}>
-                  <div className="whitespace-nowrap">
-                    <div className="text-sm font-medium text-gray-900">
-                      {r.timestamp ? r.timestamp.toLocaleDateString() : '—'}
-                    </div>
-                    <div className="text-sm text-gray-500">
-                      {r.timestamp ? r.timestamp.toLocaleTimeString() : '—'}
-                    </div>
-                    <div className="text-sm text-gray-500">
-                      {norm(r.type) === 'inbound' ? '📞 Inbound' : '📱 Outbound'}
-                    </div>
-                  </div>
-
-                  <div className="whitespace-nowrap">
-                    <div className="text-sm font-medium text-gray-900">{r.customerName}</div>
-                    <div className="text-sm text-gray-500">{r.customerPhone}</div>
-                  </div>
-
-                  <div className="whitespace-nowrap">
-                    <div className="text-sm text-gray-900">{r.agent}</div>
-                  </div>
-
-                  <div className="whitespace-nowrap">
-                    <div className="text-sm text-gray-900">{r.durationLabel}</div>
-                  </div>
-
-                  <div className="whitespace-nowrap">
-                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusBadgeClass(r.status)}`}>
-                      {r.status}
-                    </span>
-                  </div>
-                </div>
-              ))}
             </div>
           </div>
-
-          <div className="flex items-center justify-between px-4 py-3">
-            <p className="text-sm text-gray-700">
-              Showing <span className="font-medium">{filteredRows.length ? 1 : 0}</span> to{' '}
-              <span className="font-medium">{filteredRows.length}</span> of{' '}
-              <span className="font-medium">{rows.length}</span> results
-            </p>
-            <div className="flex items-center space-x-2">
-              <button className="btn btn-secondary btn-sm" disabled>Previous</button>
-              <span className="px-3 py-1 text-sm text-gray-700">1</span>
-              <button className="btn btn-secondary btn-sm" disabled>Next</button>
-            </div>
-          </div>
-        </div>
+        </>
       )}
     </div>
   );

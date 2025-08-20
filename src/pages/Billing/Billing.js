@@ -369,7 +369,7 @@ const Billing = () => {
             <button disabled className="w-full bg-gray-100 text-gray-400 py-3 px-5 rounded-xl font-medium cursor-not-allowed">Current Plan</button>
           ) : isEnterprise ? (
             <button
-              onClick={() => (window.location.href = 'mailto:sales@example.com')}
+              onClick={() => (window.location.href = 'mailto:hello@speakai.ai')}
               className="w-full bg-primary-600 text-white hover:bg-primary-700 py-3 px-5 rounded-xl font-medium transition-colors"
             >
               Contact Sales Team

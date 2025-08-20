@@ -177,7 +177,7 @@ const useAppStore = create(
         csvOrExcelFile,
         phone_column = 'phone',
         scheduled_time = '',
-        scheduled_at, 
+        scheduled_at,
       } = {}) => {
         if (!agent_name) return { success: false, error: 'agent_name is required' };
         if (!call_name) return { success: false, error: 'call_name is required' };
@@ -296,7 +296,7 @@ const useAppStore = create(
             } catch (e2) {
               const fd = new FormData();
               fd.append('call_name', call_name);
-              res = await api.post('/auth/agent/cancel-batch-calling', fd); 
+              res = await api.post('/auth/agent/cancel-batch-calling', fd);
             }
           }
 
@@ -351,7 +351,7 @@ const useAppStore = create(
           return { success: false, error: pickErr(e, 'Failed to retry batch calling') };
         }
       },
-      
+
       updateSubscription: (sub) => set({ currentSubscription: sub }),
 
       setAgentsScope: (scope) =>
@@ -507,7 +507,7 @@ const useAppStore = create(
             headers: { 'Content-Type': 'multipart/form-data' },
           });
 
-          try { await get().loadAgentsForCurrentScope(); } catch {  }
+          try { await get().loadAgentsForCurrentScope(); } catch {}
 
           return { success: true, data: res?.data };
         } catch (e) {
@@ -607,7 +607,7 @@ const useAppStore = create(
         set({ loading: true });
         try {
           const body = { range: params?.range ?? 'all', ...(params?.agent_id ? { agent_id: params.agent_id } : {}) };
-        const res = await api.post('/analysis/dashboard-analytics', body);
+          const res = await api.post('/analysis/dashboard-analytics', body);
           set({ analytics: res?.data || {}, loading: false });
           return { success: true };
         } catch (err) {
@@ -664,15 +664,66 @@ const useAppStore = create(
       callHistory: [],
       callHistoryLoading: false,
 
+      _agentNameMap() {
+        const arr = get().agents || [];
+        const map = new Map();
+        arr.forEach((a) => {
+          const id = a?.agent_id ?? a?.id ?? a?.twilio_agent_id ?? a?.uuid;
+          const name = a?.agent_name ?? a?.name ?? a?.agent ?? a?.title ?? '';
+          if (id) map.set(String(id), String(name || '').trim());
+        });
+        return map;
+      },
+
       fetchCallHistory: async (limit = 50) => {
         try {
           set({ callHistoryLoading: true });
+
+          let agentsArr = get().agents;
+          if (!Array.isArray(agentsArr) || !agentsArr.length) {
+            try {
+              const aRes = await api.post('/analysis/training/agent-individual-analytics', {});
+              agentsArr = aRes?.data?.individual_results || [];
+              set({ agents: agentsArr, agentsLoaded: true });
+            } catch {
+              agentsArr = get().agents || [];
+            }
+          }
+          const nameMap = get()._agentNameMap();
+
           const res = await api.get('/auth/agent/call-history', { params: { limit } });
-          set({ callHistory: Array.isArray(res?.data) ? res.data : [] });
+          const payload = res?.data || {};
+          const list = Array.isArray(payload) ? payload : (Array.isArray(payload.calls) ? payload.calls : []);
+
+          const normalized = list.map((c, idx) => {
+            const agent_id = c.agent_id ?? c.agent ?? c.agentId ?? null;
+            const call_date = c.call_date ?? c.date ?? c.created_at ?? c.start_time ?? c.timestamp ?? null;
+            const d = typeof call_date === 'number'
+              ? new Date(call_date * (call_date < 2000000000 ? 1000 : 1))
+              : new Date(call_date);
+
+            return {
+              id: c.id ?? c.call_id ?? idx,
+              call_id: c.call_id ?? c.id ?? idx,
+              agent_id,
+              agent_name: c.agent_name || (agent_id ? nameMap.get(String(agent_id)) : null) || '',
+              type: c.call_type ?? c.type ?? c.direction ?? 'inbound',
+              duration_seconds: Number(c.duration_seconds ?? c.duration ?? 0),
+              duration_label: c.duration_label ?? null,
+              phone_number: c.phone_number ?? c.customer_phone ?? c.caller ?? '',
+              status: c.status ?? c.call_status ?? 'completed',
+              timestamp: Number.isNaN(d.getTime()) ? null : d.toISOString(),
+            };
+          });
+
+          set({ callHistory: normalized });
           return { success: true };
         } catch (err) {
           set({ callHistory: [] });
-          return { success: false, error: err?.response?.data?.message || err?.message || 'Failed to load call history' };
+          return {
+            success: false,
+            error: err?.response?.data?.message || err?.message || 'Failed to load call history',
+          };
         } finally {
           set({ callHistoryLoading: false });
         }

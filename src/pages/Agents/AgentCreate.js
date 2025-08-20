@@ -437,7 +437,7 @@ const AgentCreate = () => {
             className="inline-flex items-center px-5 py-3 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 rounded-xl disabled:opacity-60"
           >
             <SparklesIcon className="h-4 w-4 mr-2" />
-            {isSubmitting ? 'Saving…' : 'Create Agent'}
+            {isSubmitting ? 'Creating…' : 'Create Agent'}
           </button>
         </div>
       </form>
